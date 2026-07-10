@@ -1,0 +1,124 @@
+/* ── 모노크롬(화이트 & 블랙) 디자인 토큰 ─────────────────────────── */
+:root {
+  --surface: #fafafa;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #ffffff;
+  --surface-container: #f1f1f1;
+  --on-surface: #111111;
+  --on-surface-variant: #6b6b6b;
+  --outline: #111111;
+  --outline-variant: #e4e4e4;
+  --primary: #111111;
+  --on-primary: #ffffff;
+  --radius-sm: 8px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+  --font-headline: 'Pretendard', 'Apple SD Gothic Neo', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, monospace;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--surface);
+  color: var(--on-surface);
+  font-family: var(--font-headline);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.45;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+}
+
+/* ── 앱 레이아웃 ─────────────────────────────────────────────────── */
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 16px 48px;
+}
+@media (max-width: 520px) {
+  .app {
+    padding: 18px 10px 40px;
+  }
+}
+
+.app__header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.app__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.app__title-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+}
+.app__title-dot--black {
+  background: #111;
+}
+.app__title-dot--white {
+  background: #fff;
+  border: 1.5px solid #c9c9c9;
+  margin-left: -14px;
+}
+
+.app__tabs {
+  display: flex;
+  width: 100%;
+  padding: 4px;
+  gap: 4px;
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-full);
+}
+.app__tab {
+  flex: 1;
+  padding: 10px 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-full);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-surface-variant);
+  transition: all 0.15s ease;
+}
+.app__tab.on {
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+/* ── 게임 카드 공통 ──────────────────────────────────────────────── */
+.page {
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-xl);
+  padding: 20px 18px;
+  box-shadow: var(--shadow-soft);
+}

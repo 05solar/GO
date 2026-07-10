@@ -1,0 +1,129 @@
+.omok__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.omok__status {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+.omok__status.done {
+  color: var(--primary);
+}
+.omok__wallet {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.omok__diff {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.omok__diff-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--on-surface-variant);
+}
+.omok__diff-seg {
+  flex: 1;
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-full);
+}
+.omok__diff-btn {
+  flex: 1;
+  padding: 7px 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--on-surface-variant);
+  transition: all 0.12s ease;
+}
+.omok__diff-btn.on {
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.omok__board-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
+.omok__canvas {
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.14);
+  touch-action: manipulation;
+  cursor: pointer;
+  max-width: 100%;
+}
+
+.omok__over {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  border-radius: var(--radius-lg);
+}
+.omok__over-card {
+  width: 74%;
+  max-width: 240px;
+  background: var(--surface-container-lowest);
+  border-radius: var(--radius-xl);
+  padding: 22px 18px;
+  text-align: center;
+}
+.omok__over-card h3 {
+  font-family: var(--font-headline);
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--on-surface);
+  margin-bottom: 16px;
+}
+.omok__over-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.omok__actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+.omok__btn {
+  padding: 11px 22px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--outline-variant);
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  font-weight: 700;
+  font-size: 14px;
+}
+.omok__btn--primary {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--outline);
+}
+.omok__hint {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
