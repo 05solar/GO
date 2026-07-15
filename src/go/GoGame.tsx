@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PASS, KOMI, emptyState, play, type GoState, type Diff, type FinalResult } from './go';
 import { notifyStop, requestAiMove, requestFinalize } from './goAi';
+import { movesToSgf } from './sgf';
 import { useSquareSize } from '../useSquareSize';
 import './GoGame.css';
 
@@ -30,12 +31,15 @@ const DIFFS: { key: Diff; label: string }[] = [
   { key: 'hard', label: '어려움' },
 ];
 
+const DIFF_LABEL: Record<Diff, string> = { easy: '쉬움', medium: '중간', hard: '어려움' };
+
 const BLACK = 1;
 
-interface Snap {
+// 기보 한 마디: 이 국면과 그 국면을 만든 수(첫 노드는 빈 판, move=null)
+interface Node {
   state: GoState;
-  lastMove: number | null;
-  moves: number;
+  move: number | null; // 이 상태를 만든 수 (null=시작, PASS=패스, 그 외=착수점)
+  moveNo: number; // 시작(0)부터의 착수 순번 — 홀수=흑, 짝수=백
 }
 
 interface Anim {
@@ -82,23 +86,42 @@ function easeOutBack(k: number): number {
   return 1 + c3 * x * x * x + c1 * x * x;
 }
 
+function today(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export default function GoGame() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<BoardSize>(9);
-  const [state, setState] = useState<GoState>(() => emptyState(9));
+  // 기보: 시작 국면부터의 전체 수순. cursor 는 화면에 보여줄 위치(복기용).
+  const [record, setRecord] = useState<Node[]>(() => [
+    { state: emptyState(9), move: null, moveNo: 0 },
+  ]);
+  const [cursor, setCursor] = useState(0);
+  const recordRef = useRef(record); // 비동기(워커 응답) 중 최신 기보 참조용
+  recordRef.current = record;
+
   const [status, setStatus] = useState<Status>('playing');
   const [thinking, setThinking] = useState(false);
   const [diff, setDiff] = useState<Diff>('medium');
-  const [lastMove, setLastMove] = useState<number | null>(null);
   const [result, setResult] = useState<FinalResult | null>(null);
   const [resigned, setResigned] = useState(false);
-  const [hist, setHist] = useState<Snap[]>([]);
   const [hover, setHover] = useState<number | null>(null);
   const [showCard, setShowCard] = useState(true);
-  const [moves, setMoves] = useState(0);
+  const [showNumbers, setShowNumbers] = useState(false);
+  const [copied, setCopied] = useState(false);
   const reqRef = useRef(0); // 진행 중인 워커 요청 무효화용
   const animsRef = useRef<Anim[]>([]);
+
+  // 현재 보여주는 국면(복기 위치 기준)
+  const cur = record[cursor];
+  const state = cur.state;
+  const lastMove = cur.move != null && cur.move >= 0 ? cur.move : null;
+  const moves = cur.moveNo;
+  const atTip = cursor === record.length - 1;
 
   // 반응형 판 크기 — board-wrap 폭을 측정해 비례로 간격/반지름 계산
   const boardPx = useSquareSize(wrapRef, MAX_BOARD_PX);
@@ -108,6 +131,16 @@ export default function GoGame() {
   const STEP = (W - PAD * 2) / (size - 1);
   const R = STEP * 0.46;
 
+  // 좌표 표기(예: D4). 열은 I를 건너뛴 표기, 행은 아래가 1.
+  const coordLabel = useCallback(
+    (mv: number | null): string => {
+      if (mv == null) return '';
+      if (mv === PASS) return '패스';
+      return `${layout.cols[mv % size]}${size - Math.floor(mv / size)}`;
+    },
+    [layout, size]
+  );
+
   // 화면을 떠나면 워커 폰더링 중단
   useEffect(() => () => notifyStop(), []);
 
@@ -116,17 +149,17 @@ export default function GoGame() {
     reqRef.current++;
     notifyStop();
     animsRef.current = [];
+    const fresh: Node[] = [{ state: emptyState(nextSize), move: null, moveNo: 0 }];
+    recordRef.current = fresh;
     setSize(nextSize);
-    setState(emptyState(nextSize));
+    setRecord(fresh);
+    setCursor(0);
     setStatus('playing');
     setThinking(false);
-    setLastMove(null);
     setResult(null);
     setResigned(false);
-    setHist([]);
     setHover(null);
     setShowCard(true);
-    setMoves(0);
   }, []);
 
   const reset = useCallback(() => startGame(size), [startGame, size]);
@@ -145,6 +178,14 @@ export default function GoGame() {
       animsRef.current.push({ idx: placed, color: next[placed] as 1 | 2, kind: 'place', t0 });
     }
     stoneSound(captured);
+  };
+
+  // 기보 끝에 한 마디 추가하고 그 위치로 이동(항상 최신을 보게)
+  const appendNode = (node: Node) => {
+    const nr = [...recordRef.current, node];
+    recordRef.current = nr;
+    setRecord(nr);
+    setCursor(nr.length - 1);
   };
 
   // 종국 처리: 죽은 돌 자동 판정(워커) → 한국식 계가
@@ -168,13 +209,13 @@ export default function GoGame() {
       setThinking(true);
       const rid = ++reqRef.current;
       requestAiMove(s, diff).then((mv) => {
-        if (rid !== reqRef.current) return; // 무르기/새 게임으로 무효화됨
+        if (rid !== reqRef.current) return; // 무르기/새 게임/복기로 무효화됨
         const r = play(s, mv);
         const ns = r ? r.state : play(s, PASS)!.state;
+        const played = r && mv !== PASS ? mv : PASS;
         if (r && mv !== PASS) addAnims(s.board, ns.board, mv);
-        setState(ns);
-        setLastMove(mv === PASS || !r ? null : mv);
-        setMoves((m) => m + 1);
+        const tip = recordRef.current[recordRef.current.length - 1];
+        appendNode({ state: ns, move: played, moveNo: tip.moveNo + 1 });
         setThinking(false);
         if (ns.passes >= 2) finish(ns);
       });
@@ -182,49 +223,96 @@ export default function GoGame() {
     [diff, finish]
   );
 
-  // 사람(흑) 착수
+  // 사람(흑) 착수. 복기 중(과거 국면)에 두면 그 지점부터 새 변화로 이어간다.
   const place = (idx: number) => {
-    if (status !== 'playing' || thinking || state.toMove !== BLACK) return;
+    if (status !== 'playing' || thinking) return;
+    if (state.toMove !== BLACK) return;
     const r = play(state, idx);
     if (!r) return; // 불법수(자리참·패·자살수)
-    setHist((h) => [...h, { state, lastMove, moves }]);
+    const base = atTip ? recordRef.current : recordRef.current.slice(0, cursor + 1);
+    const nr: Node[] = [...base, { state: r.state, move: idx, moveNo: cur.moveNo + 1 }];
+    recordRef.current = nr;
     addAnims(state.board, r.state.board, idx);
-    setState(r.state);
-    setLastMove(idx);
-    setMoves((m) => m + 1);
+    setRecord(nr);
+    setCursor(nr.length - 1);
     setHover(null);
     if (r.state.passes >= 2) return finish(r.state);
     aiTurn(r.state);
   };
 
   const humanPass = () => {
-    if (status !== 'playing' || thinking || state.toMove !== BLACK) return;
+    if (status !== 'playing' || thinking || !atTip || state.toMove !== BLACK) return;
     const r = play(state, PASS)!;
-    setHist((h) => [...h, { state, lastMove, moves }]);
-    setState(r.state);
-    setLastMove(null);
-    setMoves((m) => m + 1);
+    appendNode({ state: r.state, move: PASS, moveNo: cur.moveNo + 1 });
+    setHover(null);
     if (r.state.passes >= 2) return finish(r.state);
     aiTurn(r.state);
   };
 
   // 무르기: 내 마지막 착수 직전(AI 응수 포함)으로 되돌림
   const undo = () => {
-    if (status !== 'playing' || thinking || hist.length === 0) return;
-    const snap = hist[hist.length - 1];
+    if (status !== 'playing' || thinking) return;
+    const rec = recordRef.current;
+    if (rec.length <= 1) return;
+    const nr = rec.slice();
+    const dropped = nr.pop()!;
+    if (dropped.moveNo % 2 === 0 && nr.length > 1) nr.pop(); // 백 응수였으면 내 수까지
     reqRef.current++;
     notifyStop();
     animsRef.current = [];
-    setHist((h) => h.slice(0, -1));
-    setState(snap.state);
-    setLastMove(snap.lastMove);
-    setMoves(snap.moves);
+    recordRef.current = nr;
+    setRecord(nr);
+    setCursor(nr.length - 1);
     setHover(null);
   };
 
   const resign = () => {
     if (status !== 'playing' || thinking) return;
     finish(state, true);
+  };
+
+  // ── 복기(리뷰) 내비게이션 ──────────────────────────────────────
+  const goTo = (i: number) => {
+    const clamped = Math.max(0, Math.min(record.length - 1, i));
+    if (clamped !== cursor) {
+      animsRef.current = [];
+      setCursor(clamped);
+      setHover(null);
+    }
+  };
+
+  // ── SGF 내보내기 ───────────────────────────────────────────────
+  const buildSgf = (): string => {
+    const moveList = recordRef.current.slice(1).map((n) => (n.move == null ? PASS : n.move));
+    let re: string | undefined;
+    if (result && (status === 'won' || status === 'lost')) {
+      re = resigned
+        ? 'W+R'
+        : `${result.winner === BLACK ? 'B' : 'W'}+${result.margin.toFixed(1)}`;
+    }
+    return movesToSgf(moveList, { size, komi: KOMI, diff: DIFF_LABEL[diff], date: today(), result: re });
+  };
+
+  const downloadSgf = () => {
+    const blob = new Blob([buildSgf()], { type: 'application/x-go-sgf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `기보-${size}x${size}-${today()}.sgf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const copySgf = async () => {
+    try {
+      await navigator.clipboard.writeText(buildSgf());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* 클립보드 권한 없음 등은 무시 */
+    }
   };
 
   const pointFromEvent = (e: React.MouseEvent<HTMLCanvasElement>): number | null => {
@@ -243,9 +331,11 @@ export default function GoGame() {
     if (idx != null) place(idx);
   };
 
+  const canPlayHere = status === 'playing' && !thinking && state.toMove === BLACK;
+
   const onMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!HOVER_OK) return;
-    if (status !== 'playing' || thinking || state.toMove !== BLACK) {
+    if (!canPlayHere) {
       if (hover != null) setHover(null);
       return;
     }
@@ -253,6 +343,20 @@ export default function GoGame() {
     const ok = idx != null && state.board[idx] === 0 && idx !== state.ko;
     setHover(ok ? idx : null);
   };
+
+  // 착수 번호 오버레이용: 현재 국면에서 각 교차점의 돌이 몇 수째 놓인 것인지
+  const numAt = useMemo(() => {
+    if (!showNumbers) return null;
+    const arr = new Int16Array(size * size);
+    for (let i = 1; i <= cursor; i++) {
+      const prev = record[i - 1].state.board;
+      const curB = record[i].state.board;
+      for (let j = 0; j < arr.length; j++) if (prev[j] !== 0 && curB[j] === 0) arr[j] = 0;
+      const mv = record[i].move;
+      if (mv != null && mv >= 0) arr[mv] = record[i].moveNo;
+    }
+    return arr;
+  }, [showNumbers, cursor, record, size]);
 
   // 렌더링 (애니메이션 중에는 rAF 루프)
   useEffect(() => {
@@ -298,7 +402,7 @@ export default function GoGame() {
     };
 
     const gameOver = (status === 'won' || status === 'lost') && result != null;
-    const deadSet = gameOver ? new Set(result.dead) : null;
+    const deadSet = gameOver && atTip ? new Set(result.dead) : null;
 
     const draw = (): boolean => {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -363,8 +467,20 @@ export default function GoGame() {
         const [x, y] = px(a.idx);
         drawStone(x, y, a.color, R * (1 - 0.25 * k), 1 - k);
       }
-      // 마지막 착수 표시
-      if (!gameOver && lastMove != null && b[lastMove]) {
+      // 착수 번호 오버레이(복기·기보 감상용)
+      if (numAt) {
+        ctx.font = `700 ${Math.max(8, Math.round(R * 0.85))}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (let i = 0; i < b.length; i++) {
+          if (!b[i] || numAt[i] <= 0 || deadSet?.has(i)) continue;
+          if (placeAnim.has(i)) continue; // 팝 애니 중엔 생략
+          const [x, y] = px(i);
+          ctx.fillStyle = b[i] === BLACK ? '#f2f2f2' : '#151515';
+          ctx.fillText(String(numAt[i]), x, y);
+        }
+      } else if (!gameOver && lastMove != null && b[lastMove]) {
+        // 마지막 착수 표시 (번호 표시 중엔 생략)
         const [x, y] = px(lastMove);
         ctx.strokeStyle = b[lastMove] === BLACK ? 'rgba(255,238,165,0.95)' : 'rgba(220,60,60,0.9)';
         ctx.lineWidth = 2;
@@ -377,10 +493,10 @@ export default function GoGame() {
         const [x, y] = px(hover);
         drawStone(x, y, BLACK, R, 0.4);
       }
-      // 종국: 집(영역) 표시 — 사석 자리 포함
-      if (gameOver && result) {
+      // 종국: 집(영역) 표시 — 사석 자리 포함 (최종 국면에서만)
+      if (gameOver && deadSet && result) {
         for (let i = 0; i < b.length; i++) {
-          if (b[i] !== 0 && !deadSet!.has(i)) continue;
+          if (b[i] !== 0 && !deadSet.has(i)) continue;
           const t = result.territory[i];
           if (t === 0) continue;
           const [x, y] = px(i);
@@ -405,7 +521,7 @@ export default function GoGame() {
     };
     loop();
     return () => cancelAnimationFrame(raf);
-  }, [state, lastMove, hover, result, status, layout, size, boardPx]);
+  }, [state, lastMove, hover, result, status, layout, size, boardPx, numAt, atTip]);
 
   const statusText =
     status === 'won'
@@ -418,18 +534,31 @@ export default function GoGame() {
       ? '계가 중… (죽은 돌 판정)'
       : thinking
       ? 'AI(백)가 생각 중…'
+      : !atTip
+      ? `복기 중 · ${cursor}/${record.length - 1}수`
       : `내 차례 (흑돌) · ${moves + 1}수째`;
 
   const busy = thinking || status === 'scoring';
   const gameOver = status === 'won' || status === 'lost';
   const inProgress = moves > 0 && status === 'playing';
+  const totalMoves = record.length - 1;
+
+  // 기보 목록: (흑, 백) 짝으로 묶은 행
+  const kifuRows: { no: number; b?: { i: number; label: string }; w?: { i: number; label: string } }[] = [];
+  for (let i = 1; i < record.length; i += 2) {
+    kifuRows.push({
+      no: (i + 1) / 2,
+      b: { i, label: coordLabel(record[i].move) },
+      w: record[i + 1] ? { i: i + 1, label: coordLabel(record[i + 1].move) } : undefined,
+    });
+  }
 
   return (
     <main className="page baduk">
       <div className="baduk__bar">
         <span
           className={
-            'baduk__status' + (gameOver ? ' done' : '') + (busy ? ' busy' : '')
+            'baduk__status' + (gameOver ? ' done' : '') + (busy ? ' busy' : '') + (!atTip ? ' review' : '')
           }
         >
           {statusText}
@@ -476,7 +605,7 @@ export default function GoGame() {
       <div className="baduk__board-wrap" ref={wrapRef}>
         <canvas
           ref={canvasRef}
-          className="baduk__canvas"
+          className={'baduk__canvas' + (!atTip ? ' review' : '')}
           onClick={onClick}
           onMouseMove={onMouseMove}
           onMouseLeave={() => setHover(null)}
@@ -498,7 +627,7 @@ export default function GoGame() {
                     다시하기
                   </button>
                   <button className="baduk__btn" onClick={() => setShowCard(false)}>
-                    계가 보기
+                    기보 복기
                   </button>
                 </div>
               </div>
@@ -511,14 +640,78 @@ export default function GoGame() {
         )}
       </div>
 
+      {/* 복기 내비게이션 */}
+      <div className="baduk__review">
+        <div className="baduk__nav">
+          <button className="baduk__nav-btn" onClick={() => goTo(0)} disabled={cursor === 0} title="처음">
+            ⏮
+          </button>
+          <button className="baduk__nav-btn" onClick={() => goTo(cursor - 1)} disabled={cursor === 0} title="이전 수">
+            ◀
+          </button>
+          <span className="baduk__nav-pos">
+            {cursor} <span className="baduk__nav-sep">/</span> {totalMoves}
+          </span>
+          <button
+            className="baduk__nav-btn"
+            onClick={() => goTo(cursor + 1)}
+            disabled={atTip}
+            title="다음 수"
+          >
+            ▶
+          </button>
+          <button className="baduk__nav-btn" onClick={() => goTo(totalMoves)} disabled={atTip} title="마지막">
+            ⏭
+          </button>
+        </div>
+        <button
+          className={'baduk__toggle' + (showNumbers ? ' on' : '')}
+          onClick={() => setShowNumbers((v) => !v)}
+          title="돌 위에 착수 순번 표시"
+        >
+          수순 {showNumbers ? '켜짐' : '꺼짐'}
+        </button>
+      </div>
+
+      {/* 기보 목록 */}
+      {totalMoves > 0 && (
+        <div className="baduk__kifu">
+          {kifuRows.map((row) => (
+            <div className="baduk__kifu-row" key={row.no}>
+              <span className="baduk__kifu-no">{row.no}</span>
+              <button
+                className={'baduk__kifu-cell b' + (cursor === row.b!.i ? ' on' : '')}
+                onClick={() => goTo(row.b!.i)}
+              >
+                {row.b!.label}
+              </button>
+              {row.w ? (
+                <button
+                  className={'baduk__kifu-cell w' + (cursor === row.w.i ? ' on' : '')}
+                  onClick={() => goTo(row.w!.i)}
+                >
+                  {row.w.label}
+                </button>
+              ) : (
+                <span className="baduk__kifu-cell empty" />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="baduk__actions">
-        <button className="baduk__btn" onClick={humanPass} disabled={status !== 'playing' || busy}>
+        <button
+          className="baduk__btn"
+          onClick={humanPass}
+          disabled={status !== 'playing' || busy || !atTip}
+        >
           패스
         </button>
         <button
           className="baduk__btn"
           onClick={undo}
-          disabled={status !== 'playing' || busy || hist.length === 0}
+          disabled={status !== 'playing' || busy || record.length <= 1}
         >
           무르기
         </button>
@@ -529,9 +722,19 @@ export default function GoGame() {
           새 게임
         </button>
       </div>
+
+      <div className="baduk__actions baduk__actions--sgf">
+        <button className="baduk__btn" onClick={downloadSgf} disabled={totalMoves === 0}>
+          SGF 저장
+        </button>
+        <button className="baduk__btn" onClick={copySgf} disabled={totalMoves === 0}>
+          {copied ? '복사됨 ✓' : 'SGF 복사'}
+        </button>
+      </div>
+
       <p className="baduk__hint">
-        교차점을 눌러 흑돌을 놓으세요. 두 번 연속 패스하면 죽은 돌을 자동 판정해 계가합니다. 한국식 계가(집 +
-        사석) · 백 덤 {KOMI}집
+        교차점을 눌러 흑돌을 놓으세요. 과거 수로 돌아가 다른 곳에 두면 그 자리부터 새 변화로 이어집니다. 두 번
+        연속 패스하면 죽은 돌을 자동 판정해 계가합니다 · 한국식 계가(집 + 사석) · 백 덤 {KOMI}집
       </p>
     </main>
   );
