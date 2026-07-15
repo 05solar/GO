@@ -237,6 +237,54 @@
   margin-top: 8px;
 }
 
+/* ── 형세판단 ────────────────────────────────────────────────────── */
+.baduk__eval-bar {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.baduk__eval-toggle {
+  align-self: flex-start;
+  padding: 9px 18px;
+}
+.baduk__eval {
+  padding: 12px 14px;
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+}
+.baduk__eval-wr-track {
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: #efefef;
+  border: 1px solid var(--outline-variant);
+  overflow: hidden;
+}
+.baduk__eval-wr-b {
+  height: 100%;
+  background: #151515;
+  border-radius: var(--radius-full) 0 0 var(--radius-full);
+  transition: width 0.35s ease;
+}
+.baduk__eval-wr-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--on-surface);
+}
+.baduk__eval-score {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+.baduk__eval-score b {
+  color: var(--on-surface);
+}
+
 .baduk__over {
   position: absolute;
   inset: 0;

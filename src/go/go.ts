@@ -980,6 +980,52 @@ export function estimateOwnership(state: GoState, playouts = 200): Float32Array 
   return own;
 }
 
+// ── 형세판단(현 국면 승률·예상 집수 추정) ────────────────────────
+export interface PositionEval {
+  blackWinRate: number; // 흑 예상 승률 0~1
+  blackScore: number; // 흑 예상 집(area, 평균)
+  whiteScore: number; // 백 예상 집(area + 덤, 평균)
+  leader: Color; // 우세한 쪽
+  margin: number; // 우세 집수(절댓값)
+  playouts: number;
+}
+
+// 현 국면에서 전술 롤아웃을 여러 판 끝까지 돌려 승률과 예상 집수를 추정한다.
+export function evalPosition(state: GoState, komi = KOMI, playouts = 320): PositionEval {
+  ensure(state.board.length);
+  let bWins = 0;
+  let bSum = 0;
+  let wSum = 0;
+  const maxMoves = SZ * 2;
+  for (let p = 0; p < playouts; p++) {
+    let s = cloneState(state);
+    s.passes = 0; // 종국(연속 패스 2)에서 불려도 롤아웃이 돌도록 리셋
+    let last = -1;
+    let moves = 0;
+    while (s.passes < 2 && moves < maxMoves) {
+      const step = heuristicStep(s, last, moves === 0);
+      s = step.state;
+      last = step.last;
+      moves++;
+    }
+    const res = scoreArea(s.board, komi); // res.white 는 덤 포함
+    if (res.winner === 1) bWins++;
+    bSum += res.black;
+    wSum += res.white;
+  }
+  const black = bSum / playouts;
+  const white = wSum / playouts;
+  const margin = black - white;
+  return {
+    blackWinRate: bWins / playouts,
+    blackScore: black,
+    whiteScore: white,
+    leader: margin >= 0 ? 1 : 2,
+    margin: Math.abs(margin),
+    playouts,
+  };
+}
+
 // 종국 계가: 소유권이 상대 쪽으로 기운 돌을 사석으로 걷어낸 뒤 한국식(집 + 사석) 계가.
 const DEAD_TH = 0.25;
 export function finalizeGame(state: GoState, komi = KOMI): FinalResult {

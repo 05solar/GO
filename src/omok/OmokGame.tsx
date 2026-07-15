@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { N, BLACK, WHITE, checkWin, emptyBoard, inRange, isFull, type Board, type Diff } from './omok';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { N, BLACK, WHITE, checkWin, emptyBoard, inRange, isFull, forbidden, FORBIDDEN_LABEL, type Board, type Diff } from './omok';
 import { requestOmokMove } from './omokAi';
 import { useSquareSize } from '../useSquareSize';
 import './OmokGame.css';
@@ -22,7 +22,19 @@ export default function OmokGame() {
   const [thinking, setThinking] = useState(false);
   const [diff, setDiff] = useState<Diff>('medium');
   const [lastMove, setLastMove] = useState<[number, number] | null>(null);
+  const [notice, setNotice] = useState<string | null>(null); // 금수 안내(잠깐 표시)
   const reqRef = useRef(0); // 새 게임 시 진행 중이던 AI 응답 무효화용
+  const noticeTimer = useRef(0);
+
+  // 흑(사람)의 금수 자리 — 렌주룰(삼삼·사사·장목). 표시·클릭 차단용.
+  const forbiddenPoints = useMemo(() => {
+    if (status !== 'playing') return [] as [number, number][];
+    const pts: [number, number][] = [];
+    for (let r = 0; r < N; r++)
+      for (let c = 0; c < N; c++)
+        if (!board[r][c] && forbidden(board, r, c) !== 'none') pts.push([r, c]);
+    return pts;
+  }, [board, status]);
 
   // 반응형 판 크기 — board-wrap 폭을 측정해 비례로 간격/반지름 계산
   const W = useSquareSize(wrapRef, MAX_BOARD_PX);
@@ -36,10 +48,19 @@ export default function OmokGame() {
     setStatus('playing');
     setThinking(false);
     setLastMove(null);
+    setNotice(null);
   }, []);
 
   const place = (r: number, c: number) => {
     if (status !== 'playing' || thinking || board[r][c]) return;
+    // 렌주룰 금수(흑): 삼삼·사사·장목은 둘 수 없다
+    const fb = forbidden(board, r, c);
+    if (fb !== 'none') {
+      setNotice(`금수 · ${FORBIDDEN_LABEL[fb]} 자리에는 둘 수 없어요`);
+      window.clearTimeout(noticeTimer.current);
+      noticeTimer.current = window.setTimeout(() => setNotice(null), 2000);
+      return;
+    }
     const nb = board.map((row) => [...row]) as Board;
     nb[r][c] = BLACK;
     setBoard(nb);
@@ -117,6 +138,17 @@ export default function OmokGame() {
         ctx.fill();
         if (!black) { ctx.strokeStyle = '#b0b0b0'; ctx.lineWidth = 0.8; ctx.stroke(); }
       }
+    // 금수 자리 표시(흑 렌주룰): 붉은 ✕
+    const XS = STEP * 0.17;
+    ctx.strokeStyle = 'rgba(206, 42, 42, 0.8)';
+    ctx.lineWidth = 2;
+    for (const [fr, fc] of forbiddenPoints) {
+      const x = PAD + fc * STEP, y = PAD + fr * STEP;
+      ctx.beginPath();
+      ctx.moveTo(x - XS, y - XS); ctx.lineTo(x + XS, y + XS);
+      ctx.moveTo(x + XS, y - XS); ctx.lineTo(x - XS, y + XS);
+      ctx.stroke();
+    }
     // 방금 착수한 돌: 옅게 빛나는 테두리
     if (lastMove) {
       const [lr, lc] = lastMove;
@@ -133,7 +165,7 @@ export default function OmokGame() {
         ctx.restore();
       }
     }
-  }, [board, lastMove, W, PAD, STEP, R]);
+  }, [board, lastMove, forbiddenPoints, W, PAD, STEP, R]);
 
   const statusText =
     status === 'won' ? '승리!'
@@ -145,6 +177,7 @@ export default function OmokGame() {
     <main className="page omok">
       <div className="omok__bar">
         <span className={'omok__status' + (status !== 'playing' ? ' done' : '')}>{statusText}</span>
+        {notice && <span className="omok__notice">{notice}</span>}
       </div>
 
       <div className="omok__diff">
@@ -181,7 +214,10 @@ export default function OmokGame() {
       <div className="omok__actions">
         <button className="omok__btn" onClick={reset}>새 게임</button>
       </div>
-      <p className="omok__hint">교차점을 눌러 흑돌을 놓으세요. 먼저 5개를 연결하면 승리!</p>
+      <p className="omok__hint">
+        교차점을 눌러 흑돌을 놓으세요. 먼저 5개를 연결하면 승리! 흑은 렌주룰 금수(삼삼·사사·장목,{' '}
+        <span className="omok__x">✕</span> 표시)에는 둘 수 없습니다.
+      </p>
     </main>
   );
 }

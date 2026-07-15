@@ -5,6 +5,7 @@
 import {
   MctsSearch,
   diffLimits,
+  evalPosition,
   finalizeGame,
   mctsMove,
   play,
@@ -15,6 +16,7 @@ import {
 type Req =
   | { id: number; kind: 'move'; state: GoState; diff: Diff }
   | { id: number; kind: 'final'; state: GoState }
+  | { id: number; kind: 'eval'; state: GoState }
   | { kind: 'stop' };
 
 const ctx = self as unknown as {
@@ -71,6 +73,8 @@ ctx.onmessage = (e) => {
   } else if (m.kind === 'final') {
     search.reset(); // 게임 종료 → 트리 폐기(메모리 회수)
     ctx.postMessage({ id: m.id, result: finalizeGame(m.state) });
+  } else if (m.kind === 'eval') {
+    ctx.postMessage({ id: m.id, evalResult: evalPosition(m.state) });
   } else {
     search.reset(); // stop: 새 게임/무르기/화면 이탈 → 폰더링 중단·트리 폐기
   }

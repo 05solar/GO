@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { PASS, KOMI, emptyState, play, type GoState, type Diff, type FinalResult } from './go';
-import { notifyStop, requestAiMove, requestFinalize } from './goAi';
+import { PASS, KOMI, emptyState, play, type GoState, type Diff, type FinalResult, type PositionEval } from './go';
+import { notifyStop, requestAiMove, requestFinalize, requestEval } from './goAi';
 import { movesToSgf } from './sgf';
 import { useSquareSize } from '../useSquareSize';
 import './GoGame.css';
@@ -114,8 +114,12 @@ export default function GoGame() {
   const [showCard, setShowCard] = useState(true);
   const [showNumbers, setShowNumbers] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [evalResult, setEvalResult] = useState<PositionEval | null>(null);
+  const [evaluating, setEvaluating] = useState(false);
   const reqRef = useRef(0); // 진행 중인 워커 요청 무효화용
   const animsRef = useRef<Anim[]>([]);
+  const cursorRef = useRef(cursor); // 비동기 형세판단 응답이 현재 국면과 맞는지 확인용
+  cursorRef.current = cursor;
 
   // 현재 보여주는 국면(복기 위치 기준)
   const cur = record[cursor];
@@ -123,6 +127,24 @@ export default function GoGame() {
   const lastMove = cur.move != null && cur.move >= 0 ? cur.move : null;
   const moves = cur.moveNo;
   const atTip = cursor === record.length - 1;
+
+  // 국면이 바뀌면 이전 형세판단 결과는 무효 → 지운다
+  useEffect(() => {
+    setEvalResult(null);
+    setEvaluating(false);
+  }, [cursor, record]);
+
+  // 형세판단: 현 국면을 롤아웃으로 추정(워커). 복기 중이면 그 수순 기준.
+  const evaluate = () => {
+    if (evaluating || thinking || status === 'scoring') return;
+    setEvaluating(true);
+    const c0 = cursor;
+    requestEval(state).then((res) => {
+      if (cursorRef.current !== c0) return; // 그 사이 다른 국면으로 이동
+      setEvalResult(res);
+      setEvaluating(false);
+    });
+  };
 
   // 반응형 판 크기 — board-wrap 폭을 측정해 비례로 간격/반지름 계산
   const boardPx = useSquareSize(wrapRef, MAX_BOARD_PX);
@@ -681,6 +703,40 @@ export default function GoGame() {
         >
           수순 {showNumbers ? '켜짐' : '꺼짐'}
         </button>
+      </div>
+
+      {/* 형세판단 */}
+      <div className="baduk__eval-bar">
+        <button
+          className="baduk__btn baduk__eval-toggle"
+          onClick={evaluate}
+          disabled={evaluating || busy}
+        >
+          {evaluating ? '형세 계산 중…' : '형세판단'}
+        </button>
+        {evalResult &&
+          (() => {
+            const bPct = Math.round(evalResult.blackWinRate * 100);
+            const wPct = 100 - bPct;
+            const lead = evalResult.leader === BLACK ? '흑' : '백';
+            return (
+              <div className="baduk__eval">
+                <div className="baduk__eval-wr">
+                  <div className="baduk__eval-wr-track">
+                    <div className="baduk__eval-wr-b" style={{ width: bPct + '%' }} />
+                  </div>
+                  <div className="baduk__eval-wr-labels">
+                    <span>흑 {bPct}%</span>
+                    <span>백 {wPct}%</span>
+                  </div>
+                </div>
+                <div className="baduk__eval-score">
+                  예상 집 — 흑 {evalResult.blackScore.toFixed(1)} · 백 {evalResult.whiteScore.toFixed(1)}
+                  <b> · {lead} {evalResult.margin.toFixed(1)}집 우세</b>
+                </div>
+              </div>
+            );
+          })()}
       </div>
 
       {/* 기보 목록 */}

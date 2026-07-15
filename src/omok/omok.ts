@@ -40,6 +40,96 @@ export function isFull(b: Board): boolean {
   return b.every((row) => row.every((v) => v));
 }
 
+// ── 렌주룰 금수(흑 선수에게만 적용): 삼삼·사사·장목 ──────────────
+// (r,c)에 흑을 놓았다고 가정하고 4방향 각각을 분석해 열린3·4·5·장목을 센다.
+// - 정확한 정의는 재귀적(연결 3의 확장점이 다시 금수면 3으로 안 침)이지만,
+//   여기선 대중적 근사(확장해서 열린4/5가 되는지)로 판정한다.
+export type Forbidden = 'none' | 'three' | 'four' | 'overline';
+
+// line[0..10] = (r,c) 기준 오프셋 -5..+5. 1=흑, 2=백, 3=벽(판 밖), 0=빈. 중앙(index 5)=놓은 흑.
+function buildLine(b: Board, r: number, c: number, dr: number, dc: number): Int8Array {
+  const line = new Int8Array(11);
+  for (let k = -5; k <= 5; k++) {
+    const rr = r + dr * k, cc = c + dc * k;
+    line[k + 5] = k === 0 ? 1 : !inRange(rr, cc) ? 3 : b[rr][cc] === BLACK ? 1 : b[rr][cc] === WHITE ? 2 : 0;
+  }
+  return line;
+}
+// 중앙(index 5)을 포함하는 5연속(흑)이 있으면 true
+function fiveThroughCenter(line: Int8Array): boolean {
+  for (let s = 0; s + 4 <= 10; s++) {
+    if (5 < s || 5 > s + 4) continue;
+    let all = true;
+    for (let k = 0; k < 5; k++) if (line[s + k] !== 1) { all = false; break; }
+    if (all) return true;
+  }
+  return false;
+}
+// 중앙을 포함하는 '열린 4'(.XXXX. 양끝 빈칸)가 있으면 true
+function openFourThroughCenter(line: Int8Array): boolean {
+  for (let s = 1; s + 3 <= 9; s++) {
+    if (5 < s || 5 > s + 3) continue;
+    let all = true;
+    for (let k = 0; k < 4; k++) if (line[s + k] !== 1) { all = false; break; }
+    if (all && line[s - 1] === 0 && line[s + 4] === 0) return true;
+  }
+  return false;
+}
+function analyzeDir(b: Board, r: number, c: number, dr: number, dc: number) {
+  const line = buildLine(b, r, c, dr, dc);
+  let run = 1;
+  for (let i = 6; i <= 10 && line[i] === 1; i++) run++;
+  for (let i = 4; i >= 0 && line[i] === 1; i--) run++;
+  const five = run === 5;
+  const overline = run >= 6;
+  let four = false, openThree = false;
+  if (!five && !overline) {
+    // '4'(한 수로 5) 먼저 판정 — 이미 4인 방향은 열린3으로 세지 않는다.
+    for (let e = 0; e <= 10; e++) {
+      if (line[e] !== 0) continue;
+      line[e] = 1;
+      if (fiveThroughCenter(line)) four = true;
+      line[e] = 0;
+      if (four) break;
+    }
+    if (!four) {
+      // 4가 아니면서 한 수로 '열린 4'가 되면 → 이 방향은 '열린 3'
+      for (let e = 0; e <= 10; e++) {
+        if (line[e] !== 0) continue;
+        line[e] = 1;
+        if (openFourThroughCenter(line)) openThree = true;
+        line[e] = 0;
+        if (openThree) break;
+      }
+    }
+  }
+  return { five, overline, four, openThree };
+}
+
+// (r,c)가 흑에게 금수인지 판정. 5목 완성은 승리라 금수가 아니다.
+export function forbidden(b: Board, r: number, c: number): Forbidden {
+  if (b[r][c] !== 0) return 'none';
+  let fiveAny = false, overlineAny = false, fours = 0, threes = 0;
+  for (const [dr, dc] of DIRS) {
+    const a = analyzeDir(b, r, c, dr, dc);
+    if (a.five) fiveAny = true;
+    if (a.overline) overlineAny = true;
+    if (a.four) fours++;
+    if (a.openThree) threes++;
+  }
+  if (fiveAny) return 'none'; // 5목 = 승리 우선
+  if (overlineAny) return 'overline'; // 장목(6목 이상)
+  if (fours >= 2) return 'four'; // 사사
+  if (threes >= 2) return 'three'; // 삼삼
+  return 'none';
+}
+
+export const FORBIDDEN_LABEL: Record<Exclude<Forbidden, 'none'>, string> = {
+  three: '삼삼(3·3)',
+  four: '사사(4·4)',
+  overline: '장목(6목)',
+};
+
 // (r,c)에 who가 뒀다고 가정했을 때의 라인 점수 합 (후보 정렬용)
 function patternScore(len: number, ends: number): number {
   if (len >= 5) return 100000;

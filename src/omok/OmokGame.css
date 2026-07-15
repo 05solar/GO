@@ -12,6 +12,20 @@
 .omok__status.done {
   color: var(--primary);
 }
+.omok__notice {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ce2a2a;
+  animation: omok-fade 0.15s ease;
+}
+@keyframes omok-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.omok__x {
+  color: #ce2a2a;
+  font-weight: 800;
+}
 .omok__wallet {
   font-family: var(--font-mono);
   font-size: 12px;

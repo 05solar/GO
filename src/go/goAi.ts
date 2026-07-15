@@ -1,7 +1,7 @@
 // 바둑 AI 호출 래퍼 — 웹워커 우선, 워커를 못 쓰는 환경이면 동기 계산으로 폴백
-import { finalizeGame, mctsMove, type Diff, type FinalResult, type GoState } from './go';
+import { evalPosition, finalizeGame, mctsMove, type Diff, type FinalResult, type GoState, type PositionEval } from './go';
 
-type Resp = { id: number; move?: number; result?: FinalResult };
+type Resp = { id: number; move?: number; result?: FinalResult; evalResult?: PositionEval };
 
 let worker: Worker | null = null;
 let failed = false;
@@ -60,6 +60,13 @@ export async function requestFinalize(state: GoState): Promise<FinalResult> {
   if (r && r.result) return r.result;
   await yieldFrame();
   return finalizeGame(state);
+}
+
+export async function requestEval(state: GoState): Promise<PositionEval> {
+  const r = await call({ kind: 'eval', state });
+  if (r && r.evalResult) return r.evalResult;
+  await yieldFrame();
+  return evalPosition(state);
 }
 
 // 새 게임/무르기/화면 이탈 시 워커의 폰더링을 멈추고 탐색 트리를 버리게 한다
