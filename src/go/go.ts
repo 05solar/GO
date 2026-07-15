@@ -905,6 +905,13 @@ export class MctsSearch {
       }
     }
 
+    // 판이 절반 이상 찼는지(종반) — 초반엔 classify가 빈 판 전체를 한쪽 '집'으로 오판하므로,
+    // '상대 집 침투 금지' 필터는 종반에만 적용해야 한다(아니면 초반에 양쪽이 즉시 패스).
+    let stones = 0;
+    for (let i = 0; i < SZ; i++) if (state.board[i] !== 0) stones++;
+    const endgame = 2 * stones >= SZ;
+    const opp = (3 - state.toMove) as Color;
+
     const kids = root.children.slice().sort((a, b) => b.visits - a.visits);
     for (const ch of kids) {
       const mv = ch.move;
@@ -916,6 +923,8 @@ export class MctsSearch {
         if (countLiberties(r.state.board, mv) === 1) continue;
         // 자기 확정 영역(집) 메우기(따냄 없음) → 손해 헛수
         if (cls[mv] === state.toMove) continue;
+        // 종반에 상대의 확정 집에 투입 → 반드시 죽는 사석. 가망 없는 침투 방지.
+        if (endgame && cls[mv] === opp) continue;
       }
       return mv; // 실속 있는 최선수
     }

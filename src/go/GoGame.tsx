@@ -22,6 +22,7 @@ const SIZES: { key: BoardSize; label: string }[] = [
 
 const PLACE_MS = 170; // 착수 팝 애니메이션
 const CAPTURE_MS = 300; // 따냄 페이드 애니메이션
+const CAN_SCORE_MOVE = 80; // 이 수 이상이면 사람이 '계가 요청'으로 종국할 수 있음
 
 type Status = 'playing' | 'scoring' | 'won' | 'lost';
 
@@ -269,6 +270,15 @@ export default function GoGame() {
   const resign = () => {
     if (status !== 'playing' || thinking) return;
     finish(state, true);
+  };
+
+  // 계가 요청: 80수 이상 진행되면 사람이 현 국면에서 종국·계가를 강제할 수 있다.
+  // (AI가 가망 없는 국면에서 대국을 끌 때 사람이 끝낼 수 있도록)
+  const requestScore = () => {
+    if (status !== 'playing' || thinking || !atTip || moves < CAN_SCORE_MOVE) return;
+    reqRef.current++;
+    notifyStop();
+    finish(state, false);
   };
 
   // ── 복기(리뷰) 내비게이션 ──────────────────────────────────────
@@ -723,6 +733,14 @@ export default function GoGame() {
         </button>
       </div>
 
+      {status === 'playing' && atTip && moves >= CAN_SCORE_MOVE && (
+        <div className="baduk__actions">
+          <button className="baduk__btn baduk__btn--primary" onClick={requestScore} disabled={busy}>
+            계가 요청 — 지금 국면으로 종국
+          </button>
+        </div>
+      )}
+
       <div className="baduk__actions baduk__actions--sgf">
         <button className="baduk__btn" onClick={downloadSgf} disabled={totalMoves === 0}>
           SGF 저장
@@ -734,7 +752,8 @@ export default function GoGame() {
 
       <p className="baduk__hint">
         교차점을 눌러 흑돌을 놓으세요. 과거 수로 돌아가 다른 곳에 두면 그 자리부터 새 변화로 이어집니다. 두 번
-        연속 패스하면 죽은 돌을 자동 판정해 계가합니다 · 한국식 계가(집 + 사석) · 백 덤 {KOMI}집
+        연속 패스하면 죽은 돌을 자동 판정해 계가합니다. {CAN_SCORE_MOVE}수 이후에는 <b>계가 요청</b>으로 바로
+        종국할 수 있습니다 · 한국식 계가(집 + 사석) · 백 덤 {KOMI}집
       </p>
     </main>
   );
