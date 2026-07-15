@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { N, BLACK, WHITE, checkWin, emptyBoard, inRange, isFull, forbidden, FORBIDDEN_LABEL, type Board, type Diff } from './omok';
 import { requestOmokMove } from './omokAi';
+import { playPlace } from '../sound';
 import { useSquareSize } from '../useSquareSize';
 import './OmokGame.css';
 
@@ -65,6 +66,7 @@ export default function OmokGame() {
     nb[r][c] = BLACK;
     setBoard(nb);
     setLastMove([r, c]);
+    playPlace();
     if (checkWin(nb, r, c, BLACK)) return setStatus('won');
     if (isFull(nb)) return setStatus('draw');
     setThinking(true);
@@ -75,6 +77,7 @@ export default function OmokGame() {
       nb2[ar][ac] = WHITE;
       setBoard(nb2);
       setLastMove([ar, ac]);
+      playPlace();
       setThinking(false);
       if (checkWin(nb2, ar, ac, WHITE)) return setStatus('lost');
       if (isFull(nb2)) return setStatus('draw');

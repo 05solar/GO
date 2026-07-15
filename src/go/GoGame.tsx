@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PASS, KOMI, emptyState, play, type GoState, type Diff, type FinalResult, type PositionEval } from './go';
 import { notifyStop, requestAiMove, requestFinalize, requestEval } from './goAi';
 import { movesToSgf } from './sgf';
+import { playPlace, playCapture } from '../sound';
 import { useSquareSize } from '../useSquareSize';
 import './GoGame.css';
 
@@ -54,29 +55,10 @@ interface Anim {
 const HOVER_OK =
   typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(hover: hover)').matches;
 
-// ── 착수음: 웹오디오로 짧은 '딱' 소리 (파일 불필요) ──────────────
-let audio: AudioContext | null = null;
+// 착수음/따냄음은 공유 사운드 모듈(경쾌하고 밝은 톤)에서 재생한다.
 function stoneSound(capture: boolean) {
-  try {
-    type AudioWin = Window & { webkitAudioContext?: typeof AudioContext };
-    const AC = window.AudioContext || (window as AudioWin).webkitAudioContext;
-    if (!AC) return;
-    audio = audio || new AC();
-    if (audio.state === 'suspended') void audio.resume();
-    const t = audio.currentTime;
-    const osc = audio.createOscillator();
-    const gain = audio.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(capture ? 340 : 230, t);
-    osc.frequency.exponentialRampToValueAtTime(70, t + 0.09);
-    gain.gain.setValueAtTime(0.22, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
-    osc.connect(gain).connect(audio.destination);
-    osc.start(t);
-    osc.stop(t + 0.14);
-  } catch {
-    /* 사운드 실패는 무시 */
-  }
+  if (capture) playCapture();
+  else playPlace();
 }
 
 // easeOutBack: 살짝 튀었다 자리 잡는 팝 느낌
