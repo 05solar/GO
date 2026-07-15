@@ -19,6 +19,7 @@ export const PASS = -1;
 export let N = 9;
 export let SZ = N * N;
 
+
 export interface GoState {
   board: Int8Array; // 0=빈점, 1=흑, 2=백
   ko: number; // 패로 인해 금지된 점 (없으면 -1)
@@ -87,6 +88,10 @@ export function cloneState(s: GoState): GoState {
 }
 
 // ── 무리(group) 활로 계산: 세대 스탬프로 스크래치 재사용(할당 없음) ──
+// 세대(gGen/gLibGen)는 flood 호출마다 증가한다. Int32Array 스탬프에 저장하므로
+// 2^31을 넘기면 저장값이 잘려 비교가 깨진다(무한 재방문 → 스택 오버플로).
+// 안전 한계 근처에서 스탬프 배열을 0으로 비우고 세대를 리셋해 이를 막는다.
+const GEN_MAX = 0x7fffffff;
 const gSeen = new Int32Array(MAX_SZ);
 let gGen = 0;
 const gLib = new Int32Array(MAX_SZ);
@@ -94,10 +99,24 @@ let gLibGen = 0;
 const gStack = new Int32Array(MAX_SZ);
 const gGroup = new Int32Array(MAX_SZ); // 따낸 돌 수집용
 
+// 세대 증가(오버플로 직전 리셋). 반드시 flood 시작 시에만 호출.
+function bumpGen(): void {
+  if (++gGen >= GEN_MAX) {
+    gSeen.fill(0);
+    gGen = 1;
+  }
+}
+function bumpLibGen(): void {
+  if (++gLibGen >= GEN_MAX) {
+    gLib.fill(0);
+    gLibGen = 1;
+  }
+}
+
 // idx 무리에 활로가 하나라도 있으면 true (찾는 즉시 종료 → 매우 빠름)
 function hasLiberty(board: Int8Array, idx: number): boolean {
   const color = board[idx];
-  gGen++;
+  bumpGen();
   let sp = 0;
   gStack[sp++] = idx;
   gSeen[idx] = gGen;
@@ -120,8 +139,8 @@ function hasLiberty(board: Int8Array, idx: number): boolean {
 // idx 무리의 활로 수
 function countLiberties(board: Int8Array, idx: number): number {
   const color = board[idx];
-  gGen++;
-  gLibGen++;
+  bumpGen();
+  bumpLibGen();
   let sp = 0;
   gStack[sp++] = idx;
   gSeen[idx] = gGen;
@@ -149,8 +168,8 @@ function countLiberties(board: Int8Array, idx: number): number {
 // idx 무리가 단수(활로 1)면 그 유일 활로 점, 아니면 -1
 function atariPoint(board: Int8Array, idx: number): number {
   const color = board[idx];
-  gGen++;
-  gLibGen++;
+  bumpGen();
+  bumpLibGen();
   let sp = 0;
   gStack[sp++] = idx;
   gSeen[idx] = gGen;
@@ -181,7 +200,7 @@ function atariPoint(board: Int8Array, idx: number): number {
 // idx 무리의 돌들을 gGroup 에 담고 개수 반환(따냄 제거용)
 function collectGroup(board: Int8Array, idx: number): number {
   const color = board[idx];
-  gGen++;
+  bumpGen();
   let sp = 0;
   gStack[sp++] = idx;
   gSeen[idx] = gGen;
@@ -205,8 +224,8 @@ function collectGroup(board: Int8Array, idx: number): number {
 const libBuf = new Int32Array(MAX_SZ);
 function collectLibs(board: Int8Array, idx: number): number {
   const color = board[idx];
-  gGen++;
-  gLibGen++;
+  bumpGen();
+  bumpLibGen();
   let sp = 0;
   gStack[sp++] = idx;
   gSeen[idx] = gGen;
@@ -687,6 +706,7 @@ function priorValue(s: GoState, mv: number, r: { state: GoState; captured: numbe
   if (!adj) for (const d of DIA[mv]) if (pboard[d] !== 0) { adj = true; break; }
   const row = (mv / N) | 0;
   const col = mv % N;
+
   const onEdge = row === 0 || row === N - 1 || col === 0 || col === N - 1;
   const mid = (N - 1) / 2;
   if (adj) v += 0.08;
@@ -808,7 +828,12 @@ export class MctsSearch {
 
     while (iter < maxIter && performance.now() - start < ms) {
       iter++;
-      rvGen++; // 이번 시뮬레이션의 RAVE 착수 기록 세대
+      // RAVE 착수 기록 세대(오버플로 직전 리셋 — Int32 스탬프 비교가 깨지는 것 방지)
+      if (++rvGen >= GEN_MAX) {
+        rvB.fill(0);
+        rvW.fill(0);
+        rvGen = 1;
+      }
       let node = root;
       let s = cloneState(state);
 
@@ -856,28 +881,45 @@ export class MctsSearch {
     return iter;
   }
 
-  // 방문수가 가장 많은 수 선택(가상 방문 PRIOR_K 는 모든 자식이 동일).
+  // 방문수 내림차순으로 보되, '헛수'는 건너뛰고 실속 있는 최선수를 고른다.
+  // 승부가 갈린 종반에는 모든 수의 승률이 비슷해 방문수 1위가 자충 헛수가 되기 쉽다.
+  // 그런 수는 한국룰에서 상대에게 사석만 헌납하므로(끝내기 실점) 걸러낸다.
+  // 단, 패스가 최상위(탐색이 종국을 선호)면 패스한다 — 헛수로 대국을 끌지 않는다.
   bestMove(): number {
     const root = this.root;
     const state = this.rootState;
     if (!root || !state) return PASS;
-    let best = PASS;
-    let bestVisits = -1;
-    for (const ch of root.children) {
-      if (ch.visits > bestVisits) {
-        bestVisits = ch.visits;
-        best = ch.move;
+    ensure(state.board.length);
+
+    const cls = classify(state.board);
+
+    // 상대가 방금 패스했고, 판이 실제로 정리됐으며(공배 거의 없음) 이쪽이 확실히 이기면(마진 ≥2)
+    // 함께 패스해 종국한다. — 사람이 끝내려 패스했을 때 AI가 헛수로 대국을 끌지 않도록.
+    // 공배 조건이 없으면 초반 실수 패스에도 덤빨로 조기 종료되므로 반드시 확인한다.
+    if (state.passes === 1) {
+      let dame = 0;
+      for (let i = 0; i < SZ; i++) if (state.board[i] === 0 && cls[i] === 0) dame++;
+      if (dame <= 2) {
+        const sc = scoreArea(state.board);
+        if (sc.winner === state.toMove && sc.margin >= 2) return PASS;
       }
     }
-    if (best === PASS) return PASS;
 
-    // 최선수가 '자기 집'을 메우는 수(따냄 아님)라면 패스로 대체.
-    const cls = classify(state.board);
-    if (cls[best] === state.toMove) {
-      const r = play(state, best);
-      if (!r || r.captured === 0) return PASS;
+    const kids = root.children.slice().sort((a, b) => b.visits - a.visits);
+    for (const ch of kids) {
+      const mv = ch.move;
+      if (mv === PASS) return PASS; // 탐색이 패스를 최상으로 봄 → 종국
+      const r = play(state, mv);
+      if (!r) continue; // 불법(자리참·패·자살)
+      if (r.captured === 0) {
+        // 자충 throw-in(놓자마자 단수, 따냄 없음) → 사석 헌납 헛수
+        if (countLiberties(r.state.board, mv) === 1) continue;
+        // 자기 확정 영역(집) 메우기(따냄 없음) → 손해 헛수
+        if (cls[mv] === state.toMove) continue;
+      }
+      return mv; // 실속 있는 최선수
     }
-    return best;
+    return PASS; // 둘 만한 수가 없으면 패스(종국)
   }
 
   // 디버그/테스트용: 현재 루트의 실측 방문수(가상 방문 제외 안 함)
@@ -904,7 +946,7 @@ export interface FinalResult extends ScoreResult {
 }
 
 // 현 국면에서 전술 롤아웃을 여러 판 돌려 각 점의 소유권을 추정.
-export function estimateOwnership(state: GoState, playouts = 140): Float32Array {
+export function estimateOwnership(state: GoState, playouts = 200): Float32Array {
   ensure(state.board.length);
   const own = new Float32Array(SZ);
   const maxMoves = SZ * 2;
@@ -963,6 +1005,15 @@ export function finalizeGame(state: GoState, komi = KOMI): FinalResult {
   const white = tW + capW + komi;
   const margin = black - white;
   return { black, white, winner: margin > 0 ? 1 : 2, margin: Math.abs(margin), dead, territory: cls };
+}
+
+// 테스트/벤치용: 고정 시뮬레이션 수로 한 수 결정(트리 재사용·폰더링 없음).
+export function moveWithSims(state: GoState, sims: number): number {
+  ensure(state.board.length);
+  const search = new MctsSearch();
+  search.sync(state);
+  search.run(Number.POSITIVE_INFINITY, sims, true);
+  return search.bestMove();
 }
 
 // 좌표 변환 유틸(현재 크기 기준)
